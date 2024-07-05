@@ -1,20 +1,16 @@
 data_cfg:
-  dataset_name: GREW
-  dataset_root: /gfs/sdata/user/t23189/Gait/Dataset/GREW-pkl
-  # dataset_partition: ./datasets/GREW/GREW.json
-  dataset_partition: ./datasets/GREW/GREW_sm.json
+  dataset_name: CASIA-B
+  dataset_root: /media/ani/TOSHIBA_E/GAIT_Dataset/CASIA-B-pkl
+  dataset_partition: ./datasets/CASIA-B/CASIA-B.json
   num_workers: 1
-  # remove_no_gallery: false # Remove probe if no gallery for it
-  remove_no_gallery: true # Remove probe if no gallery for it
-  cache : True
-  test_dataset_name: GREW
+  remove_no_gallery: false # Remove probe if no gallery for it
+  test_dataset_name: CASIA-B
 
 evaluator_cfg:
   enable_float16: true
   restore_ckpt_strict: true
-  restore_hint: 180000
-  save_name: GaitBase_DA
-  eval_func: GREW_submission
+  restore_hint: 100
+  save_name: GEI_Predict
   sampler:
     batch_shuffle: false
     batch_size: 1
@@ -27,44 +23,32 @@ evaluator_cfg:
 loss_cfg:
   - loss_term_weight: 1.0
     margin: 0.2
+    type: EuclidianDist
+    log_prefix: gei
+    log_accuracy: true
+  - loss_term_weight: 1.0
+    margin: 0.2
     type: TripletLoss
     log_prefix: triplet
-  - loss_term_weight: 1.0
-    scale: 16
-    type: CrossEntropyLoss
-    log_prefix: softmax
-    log_accuracy: true
+
 model_cfg:
-  model: Baseline
-  backbone_cfg:
-    type: ResNet9
-    block: BasicBlock
-    channels: # Layers configuration for automatically model construction
-      - 64
-      - 128
-      - 256
-      - 512
+  model: GeiPredict
+  Backbone:
+    mode: p3d
+    in_channels: 1
     layers:
       - 1
       - 1
       - 1
       - 1
-    strides:
-      - 1
-      - 2
-      - 2
-      - 1
-    maxpool: false
-  SeparateFCs:
-    in_channels: 512
-    out_channels: 256
-    parts_num: 16
-  SeparateBNNecks:
-    class_num: 20000
-    in_channels: 256
-    parts_num: 16
+    channels: 
+      - 64
+      - 128 
+      - 256
+      - 512
   bin_num:
     - 16
+  
 optimizer_cfg:
   lr: 0.1
   momentum: 0.9
@@ -74,21 +58,21 @@ optimizer_cfg:
 scheduler_cfg:
   gamma: 0.1
   milestones: # Learning Rate Reduction at each milestones
-    - 80000
-    - 120000
-    - 150000
+    - 20000
+    - 40000
+    - 50000
   scheduler: MultiStepLR
 trainer_cfg:
   enable_float16: true # half_percesion float for memory reduction and speedup
   fix_BN: false
-  with_test: false
+  with_test: true
   log_iter: 100
   restore_ckpt_strict: true
   restore_hint: 0
-  save_iter: 60000
-  save_name: GaitBase_DA
+  save_iter: 100
+  save_name: GEI_Predict
   sync_BN: true
-  total_iter: 180000
+  total_iter: 100
   sampler:
     batch_shuffle: true
     batch_size:
@@ -97,15 +81,13 @@ trainer_cfg:
     frames_num_fixed: 30 # fixed frames number for training
     frames_num_max: 40 # max frames number for unfixed training
     frames_num_min: 20 # min frames number for unfixed traing
-    sample_type: unfixed_unordered # fixed control input frames number, unordered for controlling order of input tensor; Other options: unfixed_ordered or all_ordered
+    sample_type: fixed_unordered # fixed control input frames number, unordered for controlling order of input tensor; Other options: unfixed_ordered or all_ordered
     type: TripletSampler
   transform:
     - type: Compose
       trf_cfg:
-        - type: RandomPerspective
-          prob: 0.2
         - type: BaseSilCuttingTransform
-        - type: RandomHorizontalFlip
-          prob: 0.2
         - type: RandomRotate
-          prob: 0.2
+          prob: 0.3
+        - type: RandomErasing
+          prob: 0.3

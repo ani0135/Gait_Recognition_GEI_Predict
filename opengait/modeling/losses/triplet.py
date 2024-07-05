@@ -59,8 +59,7 @@ class TripletLoss(BaseLoss):
             row_labels: tensor with size [n_r]
             clo_label : tensor with size [n_c]
         """
-        matches = (row_labels.unsqueeze(1) ==
-                   clo_label.unsqueeze(0)).bool()  # [n_r, n_c]
+        matches = (row_labels.unsqueeze(1) ==  clo_label.unsqueeze(0)).bool()  # [n_r, n_c]
         diffenc = torch.logical_not(matches)  # [n_r, n_c]
         p, n, _ = dist.size()
         ap_dist = dist[:, matches].view(p, n, -1, 1)

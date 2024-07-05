@@ -609,6 +609,7 @@ class TransferDataset(Dataset):
     def __init__(self, args, generate_heatemap_cfgs) -> None:
         super().__init__()
         pose_root = args.pose_data_path
+        print(pose_root)
         sigma = generate_heatemap_cfgs['heatmap_generator_args']['sigma']
         self.dataset_name = args.dataset_name
         assert self.dataset_name.lower() in ["sustech1k", "grew", "ccpg", "oumvlp", "ou-mvlp", "gait3d", "casiab", "casiae"], f"Invalid dataset name: {self.dataset_name}"
@@ -620,14 +621,19 @@ class TransferDataset(Dataset):
         if self.dataset_name.lower() == "sustech1k":
             self.all_ps_data_paths = sorted(glob(os.path.join(pose_root, "*/*/*/03*.pkl")))
         else:
-            self.all_ps_data_paths = sorted(glob(os.path.join(pose_root, "*/*/*/*.pkl")))
+            print("entered in sorted")
+            # self.all_ps_data_paths = sorted(glob(os.path.join(pose_root, "*/*/*/*.pkl")))
+            self.all_ps_data_paths = glob(os.path.join(pose_root, "*/*/*/*.pkl"))
+            print("exit in sorted")
 
     def __len__(self):
+        print(len(self.all_ps_data_paths))
         return len(self.all_ps_data_paths)
     
     def __getitem__(self, index):
         pose_path = self.all_ps_data_paths[index]
         with open(pose_path, "rb") as f:
+            print(f)
             pose_data = pickle.load(f)
             if self.dataset_name.lower() == "grew":
                 # print(pose_data.shape)

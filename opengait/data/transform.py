@@ -57,6 +57,20 @@ class BaseSilCuttingTransform():
             x = x[..., cutting:-cutting]
         return x / self.divsor
 
+class BaseSilNotCuttingTransform():
+    def __init__(self, divsor=255.0, cutting=None):
+        self.divsor = divsor
+        self.cutting = cutting
+
+    def __call__(self, x):
+        # if self.cutting is not None:
+        #     cutting = self.cutting
+        # else:
+        #     cutting = int(x.shape[-1] // 64) * 10
+        # if cutting != 0: 
+        #     x = x[..., cutting:-cutting]
+        return x / self.divsor
+
 
 class BaseRgbTransform():
     def __init__(self, mean=None, std=None):

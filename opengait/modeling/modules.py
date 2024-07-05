@@ -1,9 +1,252 @@
 import torch
+from torch import nn, einsum
 import numpy as np
 import torch.nn as nn
+from einops import rearrange, repeat
 import torch.nn.functional as F
 from utils import clones, is_list_or_tuple
 from torchvision.ops import RoIAlign
+from einops.layers.torch import Rearrange
+
+
+class PreNorm(nn.Module):
+    def __init__(self, dim, fn):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim)
+        self.fn = fn
+    def forward(self, x, **kwargs):
+        return self.fn(self.norm(x), **kwargs)
+
+class Attention(nn.Module):
+    def __init__(self, dim, heads, dim_head, dropout = 0.):
+        super().__init__()
+        inner_dim = dim_head *  heads ## dim = [64, 128, 1024], dim_head = [8, 16, 128], heads = 8, inner_dim = [64, 128, 1024]
+        self.heads = heads
+        self.scale = dim_head ** -0.5
+        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
+        self.crunchHeads = nn.Linear(dim, dim)
+
+    def forward(self, x):
+        b, t, n, _, h = *x.shape, self.heads
+        qkv0 = self.to_qkv(x)
+        qkv = qkv0.chunk(3, dim = -1)
+        del qkv0
+        q, k, v = map(lambda m: rearrange(m, 'b t n (h d) -> b t h n d', h = h), qkv)
+        dots = einsum('b t h i d, b t h j d -> b t h i j', q, k) * self.scale
+        attn = dots.softmax(dim=-1)
+        out = einsum('b t h i j, b t h j d -> b t h i d', attn, v)
+        out = rearrange(out, 'b t h n d -> b t n (h d)')
+        out = self.crunchHeads(out)
+        return out, attn
+
+class FeedForward(nn.Module):
+    def __init__(self, p, cls_num):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(p, 512),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(512, cls_num)
+        )
+    def forward(self, x):
+        return self.net(x)
+
+class HorizontalPool(nn.Module):
+    def __init__(self, image_size):
+        super().__init__()
+        self.HP = nn.MaxPool3d(kernel_size = (1, 1, image_size), stride=(1, 1, image_size), padding=0, dilation=1, return_indices=False, ceil_mode=False)
+    
+    def forward(self, x):
+        x = x.unsqueeze(2)
+        x = self.HP(x)
+        x = x.squeeze(2)
+        return x
+
+class VerticalPool(nn.Module):
+    def __init__(self, image_size):
+        super().__init__()
+        self.VP = nn.AvgPool3d(kernel_size = (1, image_size, 1), stride=(1, image_size, 1), padding=0, ceil_mode=False)
+    
+    def forward(self, x):
+        x = x.unsqueeze(2)
+        x = self.VP(x)
+        x = x.squeeze(2)
+        return x
+
+class TemporalPool(nn.Module):
+    def __init__(self, channel):
+        super().__init__()
+        self.conv_ = nn.Conv3d(in_channels= channel, out_channels= 1,kernel_size=(1, 1, 1), stride=(1, 1, 1), bias=False)
+        self.max_ = nn.MaxPool3d(kernel_size = (channel, 1, 1), stride=(channel, 1, 1))
+        self.avg_ = nn.AvgPool3d(kernel_size = (channel, 1, 1), stride=(channel, 1, 1))
+
+    def forward(self, x, channel, seqL = None, dim = 1):
+        if (seqL is not None):
+            a = int(seqL.detach().cpu().numpy())
+            y = []
+            while(a >channel):
+                a = a - channel
+                y.append(channel)
+            y.append(a)
+            z = torch.split(x, split_size_or_sections = y, dim = dim)
+            if((channel//2) in y):
+                z = list(z)                
+                z[-1] = torch.cat((z[-1], torch.zeros(1, (channel//2), 64, 64).to('cuda')), dim = dim)
+            convRes_ = torch.zeros(1, 1, 1, 64, 64).to('cuda')
+            maxRes_ = torch.zeros(1, 1, 1, 64, 64).to('cuda')
+            avgRes_ = torch.zeros(1, 1, 1, 64, 64).to('cuda')
+            for tensr in z:
+                tensr = tensr.unsqueeze(2)
+                convRes_ += self.conv_(tensr)
+                maxRes_ += torch.max(tensr, dim = dim)[0]
+                avgRes_ += torch.mean(tensr, dim = dim)
+            Res_ = (convRes_ + maxRes_ + avgRes_) .squeeze(2)
+            return (Res_.squeeze(1)) ## [b h w]
+        else:
+            x1 = self.avg_(x)
+            x1 = x1.squeeze(1)
+            x2 = self.max_(x)
+            x2 = x2.squeeze(1)
+            x = x.unsqueeze(2)
+            x3 = self.conv_(x)
+            x3 = x3.squeeze(2)
+            x3 = x3.squeeze(1)
+            return ((x1+x2)+x3) ## [b h w]
+
+
+class Transformer(nn.Module):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
+        ## dim [64, 128, 1024]
+        ## dim_head [8, 16, 128]
+        ## heads = 8
+        super().__init__()
+        # self.layers = nn.ModuleList([])
+        self.norm = nn.LayerNorm(dim)
+        self.pre_norm = PreNorm(dim, Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout))
+        self.FFN = nn.Sequential(
+            nn.Linear(dim, 4 *dim),
+            nn.ReLU(),
+            nn.Linear(4 *dim, dim)
+        )
+
+
+    def forward(self, x):
+        attntn, adj_mat = self.pre_norm(x)
+        x = attntn + x
+        x1 = self.norm(x)
+        ff = self.FFN(x1)
+        del x1
+        x = x + ff
+        return x, adj_mat
+
+class PositionalEncodings(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, time):
+        device = time.device
+        half_dim = self.dim // 2
+        encodings = np.log(10000) / (half_dim - 1)
+        encodings = torch.exp(torch.arange(half_dim, device=device) * -encodings)
+        encodings = time[:, None] * encodings[None, :]
+        encodings = torch.cat((encodings.sin(), encodings.cos()), dim=-1)
+        return encodings
+
+class PatchEmbeddings(nn.Module):
+    def __init__(self, dim, depth, patch_size):
+        super().__init__()
+        self.patch_embeddings = nn.Sequential(Rearrange('b (t T) (h p1) (w p2) -> b t (h w) (p1 p2 T)', p1 = patch_size, p2 = patch_size, T = depth),
+            nn.Linear(dim, dim))
+
+    def forward(self, x):
+        return self.patch_embeddings(x)
+    
+class ConvolutionalStream(nn.Module):
+    def __init__(self, kernel, in_c, out_c):
+        '''
+        Input : [n 1 t h w]
+        Output : [n c t h w]
+
+        '''
+         #channels [128, 128, 128]
+         #kernel_size : [3, 5, 7, 9 ,11]
+
+        super().__init__()
+        kernel_1 = kernel[0]
+        kernel_2 = kernel[1]
+        kernel_3 = kernel[2]
+        self.conv1_ = nn.Conv3d(in_channels = in_c, out_channels= out_c,  kernel_size = kernel_1,
+                       stride = (1 , 1, 1), padding=(kernel_1 - 1)//2, bias=False)
+        
+        self.conv2_ = nn.Conv3d(in_channels = in_c, out_channels= out_c,  kernel_size = kernel_2
+                      , stride = (1 , 1, 1), padding=(kernel_2 - 1)//2, bias=False)
+        
+        self.conv3_ = nn.Conv3d(in_channels= in_c, out_channels= out_c, kernel_size=kernel_3,
+                                stride=(1, 1, 1), padding=(kernel_3 - 1) // 2, bias=False)
+        
+        self.maxPool = nn.MaxPool3d(kernel_size = (1, 2, 2), stride=(1, 2, 2))
+
+        self.bn1 = nn.BatchNorm3d(out_c)
+        self.bn2 = nn.BatchNorm3d(out_c)
+        self.bn3 = nn.BatchNorm3d(out_c)
+    
+    def forward(self, x):
+        x1 = F.relu(self.bn1(self.conv1_(x)))
+        x2 = F.relu(self.bn2(self.conv2_(x)))
+        x3 = F.relu(self.bn3(self.conv3_(x)))
+        x = (x1 + x2 + x3) / 3
+        return self.maxPool(x)
+
+class CopyInterleave():
+    def __init__(self, depth):
+        self.depth = depth
+    
+    def __call__(self, x):
+        return torch.repeat_interleave(x, self.depth, dim=2)
+
+        
+class PyramidPooling(nn.Module):
+    def __init__(self, img_size, pyr_blk_sz):
+        super().__init__()
+        self.pyr1_arrange = Rearrange('b (t T) (h p1) (w p2) -> b t (h w) (p1 p2 T)', T = pyr_blk_sz[0], p1 = 1, p2 = pyr_blk_sz[0])
+        self.pyr1_proj_mat = nn.init.xavier_uniform_(torch.zeros(((img_size**2)//pyr_blk_sz[0]), (pyr_blk_sz[0]**2), 1)).to('cuda') ##[p, c_in, c_out]
+
+        self.pyr2_arrange = Rearrange('b (t T) (h p1) (w p2) -> b t (h w) (p1 p2 T)', T = pyr_blk_sz[1], p1 = 1, p2 = pyr_blk_sz[1])
+        self.pyr2_proj_mat = nn.init.xavier_uniform_(torch.zeros(((img_size**2)//pyr_blk_sz[1]), (pyr_blk_sz[1]**2), 8)).to('cuda')
+
+        self.pyr3_arrange = Rearrange('b (t T) (h p1) (w p2) -> b t (h w) (p1 p2 T)', T = pyr_blk_sz[2], p1 = 1, p2 = pyr_blk_sz[2])
+        self.pyr3_proj_mat = nn.init.xavier_uniform_(torch.zeros(((img_size**2)//pyr_blk_sz[2]), (pyr_blk_sz[2]**2), 64)).to('cuda')
+
+        self.arrange = Rearrange('b (h p) c -> b h (p c)', h = img_size)
+
+
+    def forward(self, x):
+        x1 = F.relu(rearrange(self.pyr1_arrange(x), 'b t p c -> b p t c').matmul(self.pyr1_proj_mat))
+        x1 = rearrange(x1, 'b p t c -> b t p c')
+
+        x2 = F.relu(rearrange(self.pyr2_arrange(x), 'b t p c -> b p t c').matmul(self.pyr2_proj_mat))
+        x2 = rearrange(x2, 'b p t c -> b t p c')
+
+        x3 = F.relu(rearrange(self.pyr3_arrange(x), 'b t p c -> b p t c').matmul(self.pyr3_proj_mat))
+        x3 = rearrange(x3, 'b p t c -> b t p c')
+
+        x1 = torch.max(x1, dim = 1)[0] + torch.mean(x1, dim = 1)
+        x2 = torch.max(x2, dim = 1)[0] + torch.mean(x2, dim = 1)
+        x3 = torch.max(x3, dim = 1)[0] + torch.mean(x3, dim = 1)
+
+        x1 = self.arrange(x1)
+        x2 = self.arrange(x2)
+        x3 = self.arrange(x3)
+
+        return torch.cat((x1, x2, x3), dim = -1)
+
+
+        
+
+
+
+        
 
 
 class HorizontalPoolingPyramid():
@@ -61,11 +304,11 @@ class PackSequenceWrapper(nn.Module):
         """
         if seqL is None:
             return self.pooling_func(seqs, **options)
-        seqL = seqL[0].data.cpu().numpy().tolist()
-        start = [0] + np.cumsum(seqL).tolist()[:-1]
+        seqL = seqL[0].data.cpu().numpy().tolist() # [80] list
+        start = [0] + np.cumsum(seqL).tolist()[:-1] # [0]
 
         rets = []
-        for curr_start, curr_seqL in zip(start, seqL):
+        for curr_start, curr_seqL in zip(start, seqL): ## 0, 80
             narrowed_seq = seqs.narrow(dim, curr_start, curr_seqL)
             rets.append(self.pooling_func(narrowed_seq, **options))
         if len(rets) > 0 and is_list_or_tuple(rets[0]):
@@ -99,7 +342,8 @@ class SeparateFCs(nn.Module):
             x: [n, c_in, p]
             out: [n, c_out, p]
         """
-        x = x.permute(2, 0, 1).contiguous()
+        x = x.permute(2, 0, 1).contiguous() # [p, n, cin] * [p, cin, out] = [p, n, out]
+                                                # [ n, out, p ]
         if self.norm:
             out = x.matmul(F.normalize(self.fc_bin, dim=1))
         else:

@@ -18,7 +18,7 @@ class Baseline(BaseModel):
     def forward(self, inputs):
         ipts, labs, _, _, seqL = inputs
 
-        sils = ipts[0]
+        sils = ipts[0] #[1, 59, 64, 64]
         if len(sils.size()) == 4:
             sils = sils.unsqueeze(1)
         else:

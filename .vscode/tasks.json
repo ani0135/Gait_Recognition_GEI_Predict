@@ -1,0 +1,8 @@
+{
+    "version": "2.0.0",
+    "tasks": [{
+        "label": "changedirectory",
+        "command": "cd /scratch/aniketk.scee.iitmandi/OpenGait_Original", // Could be any other shell command
+        "type": "shell"
+    }]
+}

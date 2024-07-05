@@ -1,19 +1,16 @@
 data_cfg:
   dataset_name: GREW
-  dataset_root: /gfs/sdata/user/t23189/Gait/Dataset/GREW-pkl
-  # dataset_partition: ./datasets/GREW/GREW.json
-  dataset_partition: ./datasets/GREW/GREW_sm.json
-  num_workers: 1
-  # remove_no_gallery: false # Remove probe if no gallery for it
-  remove_no_gallery: true # Remove probe if no gallery for it
-  cache : True
+  dataset_root: /scratch/aniketk.scee.iitmandi/Datasets/GREW-pkl
+  dataset_partition: ./datasets/GREW/GREW.json
+  num_workers: 10
+  remove_no_gallery: false # Remove probe if no gallery for it
   test_dataset_name: GREW
 
 evaluator_cfg:
   enable_float16: true
   restore_ckpt_strict: true
   restore_hint: 180000
-  save_name: GaitBase_DA
+  save_name: GEI_Predict
   eval_func: GREW_submission
   sampler:
     batch_shuffle: false
@@ -27,44 +24,42 @@ evaluator_cfg:
 loss_cfg:
   - loss_term_weight: 1.0
     margin: 0.2
+    type: EuclidianDist
+    log_prefix: gei
+    log_accuracy: true
+  - loss_term_weight: 1.0
+    margin: 0.2
     type: TripletLoss
     log_prefix: triplet
-  - loss_term_weight: 1.0
-    scale: 16
-    type: CrossEntropyLoss
-    log_prefix: softmax
-    log_accuracy: true
+
 model_cfg:
-  model: Baseline
-  backbone_cfg:
-    type: ResNet9
-    block: BasicBlock
-    channels: # Layers configuration for automatically model construction
+  model: GeiPredict
+  channels: 
       - 64
-      - 128
+      - 128 
       - 256
       - 512
+  channels: 
+      - 64
+      - 128 
+      - 256
+      - 512
+  Backbone:
+    mode: p3d
+    in_channels: 1
     layers:
       - 1
       - 1
       - 1
       - 1
-    strides:
-      - 1
-      - 2
-      - 2
-      - 1
-    maxpool: false
-  SeparateFCs:
-    in_channels: 512
-    out_channels: 256
-    parts_num: 16
-  SeparateBNNecks:
-    class_num: 20000
-    in_channels: 256
-    parts_num: 16
+    channels: 
+      - 64
+      - 128 
+      - 256
+      - 512
   bin_num:
     - 16
+
 optimizer_cfg:
   lr: 0.1
   momentum: 0.9
@@ -85,15 +80,15 @@ trainer_cfg:
   log_iter: 100
   restore_ckpt_strict: true
   restore_hint: 0
-  save_iter: 60000
-  save_name: GaitBase_DA
+  save_iter: 10000
+  save_name: GEI_Predict
   sync_BN: true
   total_iter: 180000
   sampler:
     batch_shuffle: true
     batch_size:
-      - 3 # TripletSampler, batch_size[0] indicates Number of Identity
-      - 2 #                 batch_size[1] indicates Samples sequqnce for each Identity
+      - 4 # TripletSampler, batch_size[0] indicates Number of Identity
+      - 6 #                 batch_size[1] indicates Samples sequqnce for each Identity
     frames_num_fixed: 30 # fixed frames number for training
     frames_num_max: 40 # max frames number for unfixed training
     frames_num_min: 20 # min frames number for unfixed traing

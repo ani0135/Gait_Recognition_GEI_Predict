@@ -3,7 +3,7 @@ data_cfg:
   dataset_name: CASIA-B
   dataset_root: ../Dataset/CASIA-B-pkl
   dataset_partition: ./datasets/CASIA-B/CASIA-B.json
-  num_workers: 1
+  num_workers: 10
   remove_no_gallery: false
   test_dataset_name: CASIA-B
 
@@ -11,11 +11,12 @@ evaluator_cfg:
   enable_float16: false 
   restore_ckpt_strict: true
   restore_hint: 5000
-  save_name: GaitGL
+  save_name: ViViT
   sampler:
     batch_size: 1
     sample_type: all_ordered
     type: InferenceSampler
+    tub_depth : [4, 8, 16]
 
 loss_cfg:
   - loss_term_weight: 1.0
@@ -30,8 +31,11 @@ loss_cfg:
     log_prefix: softmax
 
 model_cfg:
-  model: GaitGL
-  channels: [32, 64, 128]
+  model: ViViT
+  channels: [1, 128]
+  tub_depth : [4, 8, 16]
+  patch_size : [4, 4, 8]
+  kernel_size : [3, 5, 7, 9 ,11]
   class_num: 74
 
 optimizer_cfg:
@@ -52,10 +56,11 @@ trainer_cfg:
   restore_ckpt_strict: true
   restore_hint: 0
   save_iter: 5000
-  save_name: GaitGL
+  save_name: ViViT
   sync_BN: true
   total_iter: 80000
   sampler:
+    tub_depth : [4, 8, 16]
     batch_shuffle: true
     batch_size:
       - 4
