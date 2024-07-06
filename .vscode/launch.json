@@ -21,9 +21,9 @@
                 "1",
                 "opengait/main.py",
                 "--cfgs",
-                "./configs/gei_predict/gei_predict_GREW.yaml",
+                "./configs/gei_predict/gei_predict_casiab.yaml",
                 "--phase",
-                "test"
+                "train"
               ],
               "env": {
                 "CUDA_VISIBLE_DEVICES": "0"

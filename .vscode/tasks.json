@@ -2,7 +2,7 @@
     "version": "2.0.0",
     "tasks": [{
         "label": "changedirectory",
-        "command": "cd /scratch/aniketk.scee.iitmandi/OpenGait_Original", // Could be any other shell command
+        "command": "cd /media/ani/TOSHIBA_E/Projects/Gait_Recognition_GEI_Predict/", // Could be any other shell command
         "type": "shell"
     }]
 }

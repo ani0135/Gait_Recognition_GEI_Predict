@@ -39,11 +39,6 @@ model_cfg:
       - 128 
       - 256
       - 512
-  channels: 
-      - 64
-      - 128 
-      - 256
-      - 512
   Backbone:
     mode: p3d
     in_channels: 1
